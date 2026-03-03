@@ -1,2 +1,2 @@
-# constructive trash tracking aplicacion
+# Trash-Can-Tracker
 Trash App
