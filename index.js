@@ -2,7 +2,13 @@
 const FALLBACK_LAT = 47.67891;
 const FALLBACK_LNG = -122.33787;
 const ZOOM_LEVEL = 15; // Shows approximately 2km area
-const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
+// Try different Overpass instances for better reliability
+const OVERPASS_APIS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://z.overpass-api.de/api/interpreter'
+];
+let currentAPIIndex = 0;
 
 let map;
 let trashCanLayer = L.featureGroup();
@@ -10,6 +16,7 @@ let userLocationMarker;
 let fetchTimeout;
 let lastFetchBounds = null;
 let lastFetchTime = 0;
+let retryCount = 0;
 
 // Custom trash can icon
 const trashCanIcon = L.icon({
@@ -98,10 +105,18 @@ function performFetch() {
     `;
     
     lastFetchTime = now;
+    retryCount = 0;
     
-    fetch(OVERPASS_API, {
+    tryFetchWithFallback(query);
+}
+
+function tryFetchWithFallback(query) {
+    const apiUrl = OVERPASS_APIS[currentAPIIndex];
+    
+    fetch(apiUrl, {
         method: 'POST',
-        body: query
+        body: query,
+        timeout: 15000
     })
     .then(response => {
         if (!response.ok) {
@@ -160,8 +175,22 @@ function performFetch() {
         updateStatus(`Found ${elements.length} trash cans in view`, 'success');
     })
     .catch(error => {
+        console.error(`Error from ${OVERPASS_APIS[currentAPIIndex]}:`, error);
+        
         const errorMsg = error.message || 'Unknown error';
-        alert(`Error loading trash cans:\n\n${errorMsg}\n\nTip: The Overpass API may be rate limiting. Try again in a few moments.`);
+        
+        // If it's a 504 or timeout, try the next API
+        if (errorMsg.includes('504') || errorMsg.includes('timeout') || errorMsg.includes('503')) {
+            retryCount++;
+            if (retryCount < OVERPASS_APIS.length) {
+                currentAPIIndex = (currentAPIIndex + 1) % OVERPASS_APIS.length;
+                updateStatus(`API busy, trying alternate server...`, 'info');
+                setTimeout(() => tryFetchWithFallback(query), 1000 + Math.random() * 2000);
+                return;
+            }
+        }
+        
+        alert(`Error loading trash cans:\n\n${errorMsg}\n\nNote: Overpass API has rate limits. Try again in a minute or check openstreetmap.org directly.`);
         console.error('Error fetching trash cans:', error);
         updateStatus('Error loading trash cans', 'error');
     });
