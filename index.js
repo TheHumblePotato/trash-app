@@ -80,8 +80,17 @@ function fetchTrashCans() {
         method: 'POST',
         body: query
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`API returned status ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
     .then(data => {
+        if (data.error) {
+            throw new Error(`Overpass API error: ${data.error}`);
+        }
+        
         const elements = data.elements || [];
         
         elements.forEach(element => {
@@ -120,6 +129,8 @@ function fetchTrashCans() {
         updateStatus(`Found ${elements.length} trash cans in view`, 'success');
     })
     .catch(error => {
+        const errorMsg = error.message || 'Unknown error';
+        alert(`Error loading trash cans:\n\n${errorMsg}`);
         console.error('Error fetching trash cans:', error);
         updateStatus('Error loading trash cans', 'error');
     });
