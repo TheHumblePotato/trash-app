@@ -26,6 +26,33 @@ body {
     font-size: 14px;
     z-index: 2;
     transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+#loadTrashButton {
+    padding: 8px 16px;
+    background: #ff6b35;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+
+#loadTrashButton:hover:not(:disabled) {
+    background: #ff5520;
+}
+
+#loadTrashButton:disabled {
+    background: #999;
+    cursor: not-allowed;
+    opacity: 0.6;
 }
 
 #status.success {
