@@ -7,6 +7,9 @@ const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
 let map;
 let trashCanLayer = L.featureGroup();
 let userLocationMarker;
+let fetchTimeout;
+let lastFetchBounds = null;
+let lastFetchTime = 0;
 
 // Custom trash can icon
 const trashCanIcon = L.icon({
@@ -51,11 +54,29 @@ function initializeMap(lat, lng, locationType) {
 function fetchTrashCans() {
     if (!map) return;
     
+    // Clear existing timeout to debounce requests
+    if (fetchTimeout) {
+        clearTimeout(fetchTimeout);
+    }
+    
+    // Debounce: wait 500ms before fetching to avoid hammering the API
+    fetchTimeout = setTimeout(() => {
+        performFetch();
+    }, 500);
+}
+
+function performFetch() {
     const bounds = map.getBounds();
     const south = bounds.getSouth();
     const west = bounds.getWest();
     const north = bounds.getNorth();
     const east = bounds.getEast();
+    
+    // Throttle: don't fetch if we did one less than 2 seconds ago
+    const now = Date.now();
+    if (lastFetchTime && (now - lastFetchTime) < 2000) {
+        return;
+    }
     
     // Clear previous markers
     trashCanLayer.clearLayers();
@@ -76,6 +97,8 @@ function fetchTrashCans() {
         out center;
     `;
     
+    lastFetchTime = now;
+    
     fetch(OVERPASS_API, {
         method: 'POST',
         body: query
@@ -84,7 +107,15 @@ function fetchTrashCans() {
         if (!response.ok) {
             throw new Error(`API returned status ${response.status}: ${response.statusText}`);
         }
-        return response.json();
+        return response.text();
+    })
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            return data;
+        } catch (e) {
+            throw new Error(`Invalid JSON response: ${e.message}`);
+        }
     })
     .then(data => {
         if (data.error) {
@@ -130,7 +161,7 @@ function fetchTrashCans() {
     })
     .catch(error => {
         const errorMsg = error.message || 'Unknown error';
-        alert(`Error loading trash cans:\n\n${errorMsg}`);
+        alert(`Error loading trash cans:\n\n${errorMsg}\n\nTip: The Overpass API may be rate limiting. Try again in a few moments.`);
         console.error('Error fetching trash cans:', error);
         updateStatus('Error loading trash cans', 'error');
     });
