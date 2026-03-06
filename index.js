@@ -2,8 +2,19 @@
 const FALLBACK_LAT = 47.67891;
 const FALLBACK_LNG = -122.33787;
 const ZOOM_LEVEL = 15; // Shows approximately 2km area
+const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
 
 let map;
+let trashCanLayer = L.featureGroup();
+let userLocationMarker;
+
+// Custom trash can icon
+const trashCanIcon = L.icon({
+    iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cmVjdCB4PSI2IiB5PSI4IiB3aWR0aD0iMTIiIGhlaWdodD0iMTAiIGZpbGw9IiMzMzMiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxIi8+PHJlY3QgeD0iNiIgeT0iMiIgd2lkdGg9IjEyIiBoZWlnaHQ9IjIiIGZpbGw9IiMzMzMiLz48bGluZSB4MT0iMTAiIHkxPSI1IiB4Mj0iMTAiIHkyPSI2IiBzdHJva2U9IiMzMzMiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==',
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -32]
+});
 
 function initializeMap(lat, lng, locationType) {
     // Create map centered at the provided coordinates
@@ -15,14 +26,103 @@ function initializeMap(lat, lng, locationType) {
         maxZoom: 19,
     }).addTo(map);
     
-    // Add a marker at the center
-    L.marker([lat, lng])
+    // Add trash can layer
+    trashCanLayer.addTo(map);
+    
+    // Add user location marker
+    userLocationMarker = L.marker([lat, lng], {
+        title: locationType
+    })
         .bindPopup(`<b>${locationType}</b><br>Latitude: ${lat.toFixed(4)}<br>Longitude: ${lng.toFixed(4)}`)
         .addTo(map)
         .openPopup();
     
+    // Fetch trash cans for initial view
+    fetchTrashCans();
+    
+    // Fetch trash cans when map moves or zooms
+    map.on('moveend', fetchTrashCans);
+    map.on('zoomend', fetchTrashCans);
+    
     // Update status
     updateStatus(`Map centered at ${locationType}`, 'success');
+}
+
+function fetchTrashCans() {
+    if (!map) return;
+    
+    const bounds = map.getBounds();
+    const south = bounds.getSouth();
+    const west = bounds.getWest();
+    const north = bounds.getNorth();
+    const east = bounds.getEast();
+    
+    // Clear previous markers
+    trashCanLayer.clearLayers();
+    
+    updateStatus('Searching for trash cans...', 'info');
+    
+    // Overpass query for waste_basket and similar amenities
+    const query = `
+        [bbox:${south},${west},${north},${east}];
+        (
+            node["amenity"="waste_basket"];
+            node["amenity"="waste_disposal"];
+            node["amenity"="recycling"];
+            way["amenity"="waste_basket"];
+            way["amenity"="waste_disposal"];
+            way["amenity"="recycling"];
+        );
+        out center;
+    `;
+    
+    fetch(OVERPASS_API, {
+        method: 'POST',
+        body: query
+    })
+    .then(response => response.json())
+    .then(data => {
+        const elements = data.elements || [];
+        
+        elements.forEach(element => {
+            let lat, lng;
+            
+            if (element.type === 'node') {
+                lat = element.lat;
+                lng = element.lon;
+            } else if (element.type === 'way' && element.center) {
+                lat = element.center.lat;
+                lng = element.center.lon;
+            }
+            
+            if (lat && lng) {
+                const marker = L.marker([lat, lng], { icon: trashCanIcon });
+                
+                // Build popup content
+                let popupContent = '<b>🗑️ Trash Can</b>';
+                if (element.tags) {
+                    const amenity = element.tags.amenity;
+                    const type = element.tags.type;
+                    
+                    if (amenity === 'waste_basket') popupContent = '<b>🗑️ Waste Basket</b>';
+                    else if (amenity === 'waste_disposal') popupContent = '<b>🗑️ Waste Disposal</b>';
+                    else if (amenity === 'recycling') popupContent = '<b>♻️ Recycling</b>';
+                    
+                    if (type) popupContent += `<br>Type: ${type}`;
+                }
+                
+                popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}`;
+                marker.bindPopup(popupContent);
+                trashCanLayer.addLayer(marker);
+            }
+        });
+        
+        updateStatus(`Found ${elements.length} trash cans in view`, 'success');
+    })
+    .catch(error => {
+        console.error('Error fetching trash cans:', error);
+        updateStatus('Error loading trash cans', 'error');
+    });
 }
 
 function updateStatus(message, type = 'info') {
