@@ -58,14 +58,18 @@ function addLoadButton() {
   document.getElementById("status").appendChild(button);
 }
 
-function loadTrashCansOnce() {
-  if (hasLoadedTrashCans) {
-    alert("Trash cans already loaded! Check the map for markers.");
-    return;
+function updateStatus(message, type = "info") {
+  const statusEl = document.getElementById("status");
+  let statusText = statusEl.querySelector("#statusText");
+
+  if (!statusText) {
+    statusText = document.createElement("div");
+    statusText.id = "statusText";
+    statusEl.insertBefore(statusText, statusEl.firstChild);
   }
-  hasLoadedTrashCans = true;
-  document.getElementById("loadTrashButton").disabled = true;
-  performFetch();
+
+  statusText.textContent = message;
+  statusEl.className = type;
 }
 
 function performFetch() {
@@ -218,12 +222,6 @@ function tryFetchWithFallback(query) {
       const btn = document.getElementById("loadTrashButton");
       if (btn) btn.disabled = false;
     });
-}
-
-function updateStatus(message, type = "info") {
-  const statusEl = document.getElementById("status");
-  statusEl.textContent = message;
-  statusEl.className = type;
 }
 
 navigator.geolocation.getCurrentPosition(
