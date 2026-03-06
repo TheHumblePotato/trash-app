@@ -91,7 +91,9 @@ function performFetch() {
     updateStatus('Searching for trash cans...', 'info');
     
     // Overpass query for waste_basket and similar amenities
+    // Explicitly request JSON format with [out:json]
     const query = `
+        [out:json];
         [bbox:${south},${west},${north},${east}];
         (
             node["amenity"="waste_basket"];
@@ -125,6 +127,10 @@ function tryFetchWithFallback(query) {
         return response.text();
     })
     .then(text => {
+        // Check if response is HTML/XML (error) instead of JSON
+        if (text.trim().startsWith('<')) {
+            throw new Error('API returned non-JSON response (possibly HTML error page)');
+        }
         try {
             const data = JSON.parse(text);
             return data;
