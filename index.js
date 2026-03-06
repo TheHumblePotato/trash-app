@@ -79,6 +79,12 @@ function performFetch() {
     const north = bounds.getNorth();
     const east = bounds.getEast();
     
+    // Validate coordinates
+    if (!isFinite(south) || !isFinite(west) || !isFinite(north) || !isFinite(east)) {
+        updateStatus('Invalid map bounds', 'error');
+        return;
+    }
+    
     // Throttle: don't fetch if we did one less than 2 seconds ago
     const now = Date.now();
     if (lastFetchTime && (now - lastFetchTime) < 2000) {
@@ -90,21 +96,17 @@ function performFetch() {
     
     updateStatus('Searching for trash cans...', 'info');
     
-    // Overpass query for waste_basket and similar amenities
-    // Explicitly request JSON format with [out:json]
-    const query = `
-        [out:json];
-        [bbox:${south},${west},${north},${east}];
-        (
-            node["amenity"="waste_basket"];
-            node["amenity"="waste_disposal"];
-            node["amenity"="recycling"];
-            way["amenity"="waste_basket"];
-            way["amenity"="waste_disposal"];
-            way["amenity"="recycling"];
-        );
-        out center;
-    `;
+    // Overpass query - use standard format with timeout
+    const query = `[out:json][timeout:10];
+(
+  node["amenity"="waste_basket"](${south},${west},${north},${east});
+  node["amenity"="waste_disposal"](${south},${west},${north},${east});
+  node["amenity"="recycling"](${south},${west},${north},${east});
+  way["amenity"="waste_basket"](${south},${west},${north},${east});
+  way["amenity"="waste_disposal"](${south},${west},${north},${east});
+  way["amenity"="recycling"](${south},${west},${north},${east});
+);
+out center;`;
     
     lastFetchTime = now;
     retryCount = 0;
