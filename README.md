@@ -1,2 +1,2 @@
-# trash-app
+# Trash-Can-Tracker
 Trash App
