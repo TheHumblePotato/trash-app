@@ -10,6 +10,7 @@ body {
     display: flex;
     flex-direction: column;
     background: #f0f0f0;
+    padding-bottom: 60px;
 }
 
 #map {
@@ -23,19 +24,22 @@ body {
     background: #333;
     color: #fff;
     font-size: 14px;
-    z-index: 2;
-    transition: all 0.3s ease;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     min-height: 50px;
 }
 
 #statusText {
     flex: 1;
-    min-width: 200px;
+    min-width: 0;
 }
 
 #loadTrashButton {

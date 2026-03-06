@@ -51,24 +51,28 @@ function initializeMap(lat, lng, locationType) {
 }
 
 function addLoadButton() {
+  const statusEl = document.getElementById("status");
+  
+  const textDiv = document.createElement("div");
+  textDiv.id = "statusText";
+  textDiv.textContent = "Ready to load trash cans";
+  statusEl.appendChild(textDiv);
+  
   const button = document.createElement("button");
   button.id = "loadTrashButton";
   button.textContent = "🗑️ Load Trash Cans";
   button.onclick = loadTrashCansOnce;
-  document.getElementById("status").appendChild(button);
+  statusEl.appendChild(button);
 }
 
 function updateStatus(message, type = "info") {
   const statusEl = document.getElementById("status");
-  let statusText = statusEl.querySelector("#statusText");
-
-  if (!statusText) {
-    statusText = document.createElement("div");
-    statusText.id = "statusText";
-    statusEl.insertBefore(statusText, statusEl.firstChild);
+  const statusText = statusEl.querySelector("#statusText");
+  
+  if (statusText) {
+    statusText.textContent = message;
   }
-
-  statusText.textContent = message;
+  
   statusEl.className = type;
 }
 
