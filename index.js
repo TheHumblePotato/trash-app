@@ -1,16 +1,16 @@
 const FALLBACK_LAT = 47.67891;
 const FALLBACK_LNG = -122.33787;
-const QUARTER_MILE_ZOOM_LEVEL = 19; // Zoom level for 0.25 mile radius
+const HALF_MILE_ZOOM_LEVEL = 17; // Zoom level for 0.5 mile radius
 
 const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 
 let map;
 let trashCanLayer = L.featureGroup();
 let userLocationMarker;
+let userHeadingLayer = L.featureGroup(); // Layer for heading indicator
 let userLat, userLng; // Store user location for distance calculations
 let cachedTrashCans = null;
 let deviceHeading = null; // Device compass heading in degrees (0-360)
-let nearestTrashCanBearing = null; // Bearing to nearest trash can
 
 // Icon colors for different amenity types
 const trashCanIcons = {
@@ -104,6 +104,9 @@ function handleDeviceOrientation(event) {
     event.webkitCompassHeading !== undefined
       ? event.webkitCompassHeading
       : 360 - event.alpha;
+  
+  // Update the heading indicator on map
+  updateUserHeadingIndicator();
 }
 
 const trashCanIcon = L.icon({
@@ -118,7 +121,7 @@ function initializeMap(lat, lng, locationType) {
   userLat = lat;
   userLng = lng; // Store for distance calculations
   
-  map = L.map("map").setView([lat, lng], QUARTER_MILE_ZOOM_LEVEL);
+  map = L.map("map").setView([lat, lng], HALF_MILE_ZOOM_LEVEL);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors",
@@ -126,6 +129,7 @@ function initializeMap(lat, lng, locationType) {
   }).addTo(map);
 
   trashCanLayer.addTo(map);
+  userHeadingLayer.addTo(map);
 
   userLocationMarker = L.marker([lat, lng], {
     title: locationType,
@@ -146,11 +150,6 @@ function addLoadButton() {
     button.onclick = loadTrashCans;
   }
   
-  const goButton = document.getElementById("goButton");
-  if (goButton) {
-    goButton.onclick = showGoModal;
-  }
-  
   // Keyboard shortcut: Press 'L' to load trash cans
   document.addEventListener("keydown", (e) => {
     if (e.key === "l" || e.key === "L") {
@@ -162,80 +161,33 @@ function addLoadButton() {
   initializeDeviceOrientation();
 }
 
-function showGoModal() {
-  if (!cachedTrashCans || cachedTrashCans.length === 0) {
-    alert("No trash cans loaded. Click Load first.");
-    return;
-  }
-
-  // Find nearest trash can
-  let minDistance = Infinity;
-  let nearest = null;
+// Update user heading indicator on map
+function updateUserHeadingIndicator() {
+  userHeadingLayer.clearLayers();
   
-  cachedTrashCans.forEach((element) => {
-    let lat, lng;
-    if (element.type === "node") {
-      lat = element.lat;
-      lng = element.lon;
-    } else if (element.type === "way" && element.center) {
-      lat = element.center.lat;
-      lng = element.center.lon;
-    }
+  if (deviceHeading !== null && map) {
+    // Create a line showing device heading direction
+    const headingRad = (deviceHeading * Math.PI) / 180;
+    const distance = 0.002; // About 200m in degrees
+    const endLat = userLat + distance * Math.cos(headingRad);
+    const endLng = userLng + distance * Math.sin(headingRad);
     
-    if (lat && lng) {
-      const distance = calculateDistance(userLat, userLng, lat, lng);
-      if (distance < minDistance) {
-        minDistance = distance;
-        nearest = { lat, lng, distance };
-      }
-    }
-  });
-
-  if (!nearest) return;
-
-  nearestTrashCanBearing = calculateBearing(userLat, userLng, nearest.lat, nearest.lng);
-
-  // Create modal
-  const modal = document.getElementById("goModal");
-  const arrowDiv = document.getElementById("goArrow");
-  const distanceDiv = document.getElementById("goDistance");
-  
-  // Update bearing every frame for compass tracking
-  function updateArrow() {
-    if (deviceHeading !== null) {
-      // Calculate relative bearing: where to point relative to device orientation
-      let rotation = nearestTrashCanBearing - deviceHeading;
-      // Normalize to -180 to 180 range for shortest rotation
-      rotation = ((rotation + 180) % 360) - 180;
-      arrowDiv.style.transform = `rotate(${rotation}deg)`;
-    } else {
-      // No compass: point toward absolute bearing
-      arrowDiv.style.transform = `rotate(${nearestTrashCanBearing}deg)`;
-    }
-    if (modal.style.display === "block") {
-      requestAnimationFrame(updateArrow);
-    }
+    // Draw line
+    const line = L.polyline(
+      [[userLat, userLng], [endLat, endLng]],
+      { color: "#0066ff", weight: 3, opacity: 0.8, dashArray: "5, 5" }
+    );
+    userHeadingLayer.addLayer(line);
+    
+    // Add arrow marker at end
+    const arrowIcon = L.divIcon({
+      className: "heading-arrow",
+      html: `<div style="font-size: 24px; color: #0066ff; transform: rotate(${deviceHeading}deg); transform-origin: center; text-shadow: 1px 1px 3px rgba(0,0,0,0.5);">▶</div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+    L.marker([endLat, endLng], { icon: arrowIcon }).addTo(userHeadingLayer);
   }
-
-  distanceDiv.textContent = `${nearest.distance.toFixed(2)} mi`;
-  modal.style.display = "block";
-  updateArrow();
-
-  // Close modal when clicking outside
-  modal.onclick = (e) => {
-    if (e.target === modal) {
-      modal.style.display = "none";
-    }
-  };
-
-  // Close on Escape
-  const closeHandler = (e) => {
-    if (e.key === "Escape") {
-      modal.style.display = "none";
-      document.removeEventListener("keydown", closeHandler);
-    }
-  };
-  document.addEventListener("keydown", closeHandler);
 }
 
 function loadTrashCans() {
@@ -245,8 +197,8 @@ function loadTrashCans() {
 function performFetch() {
   const center = map.getCenter();
   
-  // Zoom to 0.25 mile radius around current view center
-  map.setView(center, QUARTER_MILE_ZOOM_LEVEL);
+  // Zoom to 0.5 mile radius around current view center
+  map.setView(center, HALF_MILE_ZOOM_LEVEL);
   
   // After zooming, wait a moment for bounds to update, then fetch
   setTimeout(() => {
