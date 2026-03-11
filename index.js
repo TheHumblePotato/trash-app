@@ -11,19 +11,37 @@ const OVERPASS_APIS = [
 let map;
 let trashCanLayer = L.featureGroup();
 let userLocationMarker;
-let hasLoadedTrashCans = false;
+let userLat, userLng; // Store user location for distance calculations
 let cachedTrashCans = null;
 let currentAPIIndex = 0;
 
+// Haversine formula to calculate distance between two coordinates (in miles)
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 3959; // Earth's radius in miles
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 const trashCanIcon = L.icon({
   iconUrl:
-    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cmVjdCB4PSI2IiB5PSI4IiB3aWR0aD0iMTIiIGhlaWdodD0iMTAiIGZpbGw9IiMzMzMiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxIi8+PHJlY3QgeD0iNiIgeT0iMiIgd2lkdGg9IjEyIiBoZWlnaHQ9IjIiIGZpbGw9IiMzMzMiLz48bGluZSB4MT0iMTAiIHkxPSI1IiB4Mj0iMTAiIHkyPSI2IiBzdHJva2U9IiMzMzMiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==",
-  iconSize: [32, 32],
-  iconAnchor: [16, 32],
-  popupAnchor: [0, -32],
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cmVjdCB4PSI2IiB5PSI4IiB3aWR0aD0iMTIiIGhlaWdodD0iMTAiIGZpbGw9IiNmZjZiMzUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxIi8+PHJlY3QgeD0iNiIgeT0iMiIgd2lkdGg9IjEyIiBoZWlnaHQ9IjIiIGZpbGw9IiNmZjZiMzUiLz48bGluZSB4MT0iMTAiIHkxPSI1IiB4Mj0iMTAiIHkyPSI2IiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==",
+  iconSize: [48, 48],
+  iconAnchor: [24, 48],
+  popupAnchor: [0, -48],
 });
 
 function initializeMap(lat, lng, locationType) {
+  userLat = lat;
+  userLng = lng; // Store for distance calculations
+  
   map = L.map("map").setView([lat, lng], ZOOM_LEVEL);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -49,27 +67,18 @@ function initializeMap(lat, lng, locationType) {
 function addLoadButton() {
   const button = document.getElementById("loadTrashButton");
   if (button) {
-    button.onclick = loadTrashCansOnce;
+    button.onclick = loadTrashCans;
   }
   
   // Keyboard shortcut: Press 'L' to load trash cans
   document.addEventListener("keydown", (e) => {
     if (e.key === "l" || e.key === "L") {
-      if (!hasLoadedTrashCans) {
-        loadTrashCansOnce();
-      }
+      loadTrashCans();
     }
   });
 }
 
-function loadTrashCansOnce() {
-  if (hasLoadedTrashCans) {
-    alert(
-      `Trash cans already loaded (${cachedTrashCans ? cachedTrashCans.length : 0} found). Reload to fetch again.`,
-    );
-    return;
-  }
-  hasLoadedTrashCans = true;
+function loadTrashCans() {
   performFetch();
 }
 
@@ -111,7 +120,6 @@ out center;`;
 function tryFetchWithFallback(query) {
   if (currentAPIIndex >= OVERPASS_APIS.length) {
     alert("All APIs unavailable. Try again later.");
-    hasLoadedTrashCans = false;
     return;
   }
 
@@ -132,6 +140,9 @@ function tryFetchWithFallback(query) {
       const elements = data.elements || [];
       cachedTrashCans = elements;
 
+      let minDistance = Infinity;
+      let nearestTrashCan = null;
+
       elements.forEach((element) => {
         let lat, lng;
         if (element.type === "node") {
@@ -143,6 +154,13 @@ function tryFetchWithFallback(query) {
         }
 
         if (lat && lng) {
+          // Calculate distance to this trash can
+          const distance = calculateDistance(userLat, userLng, lat, lng);
+          if (distance < minDistance) {
+            minDistance = distance;
+            nearestTrashCan = { lat, lng, distance };
+          }
+
           const marker = L.marker([lat, lng], { icon: trashCanIcon });
           let popupContent = "<b>🗑️ Trash Can</b>";
           if (element.tags) {
@@ -153,16 +171,55 @@ function tryFetchWithFallback(query) {
             else if (element.tags.amenity === "recycling")
               popupContent = "<b>♻️ Recycling</b>";
           }
-          popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}`;
+          popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}<br><b>Distance: ${distance.toFixed(2)} mi</b>`;
           marker.bindPopup(popupContent);
           trashCanLayer.addLayer(marker);
         }
       });
 
-      updateStatus(
-        `Found ${elements.length} trash cans! (Loaded once to save API)`,
-        "success",
-      );
+      // Auto-zoom to 0.5 mile radius around results
+      if (elements.length > 0) {
+        const halfMileInDegrees = 0.00724; // approximate conversion: 0.5 mi ≈ 0.00724 degrees
+        
+        let minLat = Infinity, maxLat = -Infinity;
+        let minLng = Infinity, maxLng = -Infinity;
+        
+        elements.forEach((element) => {
+          let lat, lng;
+          if (element.type === "node") {
+            lat = element.lat;
+            lng = element.lon;
+          } else if (element.type === "way" && element.center) {
+            lat = element.center.lat;
+            lng = element.center.lon;
+          }
+          
+          if (lat && lng) {
+            minLat = Math.min(minLat, lat);
+            maxLat = Math.max(maxLat, lat);
+            minLng = Math.min(minLng, lng);
+            maxLng = Math.max(maxLng, lng);
+          }
+        });
+        
+        // Expand bounds to create 0.5 mile radius buffer
+        minLat -= halfMileInDegrees;
+        maxLat += halfMileInDegrees;
+        minLng -= halfMileInDegrees;
+        maxLng += halfMileInDegrees;
+        
+        const bounds = L.latLngBounds(
+          L.latLng(minLat, minLng),
+          L.latLng(maxLat, maxLng)
+        );
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+
+      let statusMsg = `Found ${elements.length} trash cans!`;
+      if (nearestTrashCan) {
+        statusMsg += ` Nearest: ${nearestTrashCan.distance.toFixed(2)} mi away`;
+      }
+      updateStatus(statusMsg, "success");
     })
     .catch((error) => {
       const errorMsg = error.message;
@@ -179,7 +236,6 @@ function tryFetchWithFallback(query) {
       }
       alert(`Error: ${errorMsg}`);
       updateStatus("Error loading", "error");
-      hasLoadedTrashCans = false;
     });
 }
 
