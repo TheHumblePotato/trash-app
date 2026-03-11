@@ -7,14 +7,13 @@ const OVERPASS_APIS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://z.overpass-api.de/api/interpreter",
 ];
-let currentAPIIndex = 0;
 
 let map;
 let trashCanLayer = L.featureGroup();
 let userLocationMarker;
-let lastFetchTime = 0;
-let retryCount = 0;
 let hasLoadedTrashCans = false;
+let cachedTrashCans = null;
+let currentAPIIndex = 0;
 
 const trashCanIcon = L.icon({
   iconUrl:
@@ -44,36 +43,36 @@ function initializeMap(lat, lng, locationType) {
     .openPopup();
 
   addLoadButton();
-  updateStatus(
-    `Map centered at ${locationType} - Click "Load Trash Cans" to find nearby trash`,
-    "success",
-  );
+  updateStatus(`Map loaded - Click button to find trash cans`, "success");
 }
 
 function addLoadButton() {
-  const statusEl = document.getElementById("status");
-  
-  const textDiv = document.createElement("div");
-  textDiv.id = "statusText";
-  textDiv.textContent = "Ready to load trash cans";
-  statusEl.appendChild(textDiv);
-  
-  const button = document.createElement("button");
-  button.id = "loadTrashButton";
-  button.textContent = "🗑️ Load Trash Cans";
-  button.onclick = loadTrashCansOnce;
-  statusEl.appendChild(button);
+  const L_Control = L.Control.extend({
+    onAdd: function(mapObj) {
+      const container = L.DomUtil.create("div", "leaflet-bar leaflet-control");
+      const button = L.DomUtil.create("button", "", container);
+      button.id = "loadTrashButton";
+      button.innerHTML = "🗑️ Load Trash Cans";
+      button.style.cssText =
+        "padding: 12px 16px; background: #ff6b35; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; display: block;";
+      L.DomEvent.disableClickPropagation(button);
+      L.DomEvent.on(button, "click", loadTrashCansOnce);
+      return container;
+    },
+  });
+
+  new L_Control({ position: "topright" }).addTo(map);
 }
 
-function updateStatus(message, type = "info") {
-  const statusEl = document.getElementById("status");
-  const statusText = statusEl.querySelector("#statusText");
-  
-  if (statusText) {
-    statusText.textContent = message;
+function loadTrashCansOnce() {
+  if (hasLoadedTrashCans) {
+    alert(
+      `Trash cans already loaded (${cachedTrashCans ? cachedTrashCans.length : 0} found). Reload to fetch again.`,
+    );
+    return;
   }
-  
-  statusEl.className = type;
+  hasLoadedTrashCans = true;
+  performFetch();
 }
 
 function performFetch() {
@@ -93,13 +92,7 @@ function performFetch() {
     return;
   }
 
-  const now = Date.now();
-  if (lastFetchTime && now - lastFetchTime < 2000) {
-    return;
-  }
-
   trashCanLayer.clearLayers();
-
   updateStatus("Searching for trash cans...", "info");
 
   const query = `[out:json][timeout:10];
@@ -113,51 +106,36 @@ function performFetch() {
 );
 out center;`;
 
-  lastFetchTime = now;
-  retryCount = 0;
-
+  currentAPIIndex = 0;
   tryFetchWithFallback(query);
 }
 
 function tryFetchWithFallback(query) {
+  if (currentAPIIndex >= OVERPASS_APIS.length) {
+    alert("All APIs unavailable. Try again later.");
+    hasLoadedTrashCans = false;
+    return;
+  }
+
   const apiUrl = OVERPASS_APIS[currentAPIIndex];
 
-  fetch(apiUrl, {
-    method: "POST",
-    body: query,
-    timeout: 15000,
-  })
+  fetch(apiUrl, { method: "POST", body: query })
     .then((response) => {
-      if (!response.ok) {
-        throw new Error(
-          `API returned status ${response.status}: ${response.statusText}`,
-        );
-      }
+      if (!response.ok) throw new Error(`Status ${response.status}`);
       return response.text();
     })
     .then((text) => {
-      if (text.trim().startsWith("<")) {
-        throw new Error(
-          "API returned non-JSON response (possibly HTML error page)",
-        );
-      }
-      try {
-        const data = JSON.parse(text);
-        return data;
-      } catch (e) {
-        throw new Error(`Invalid JSON response: ${e.message}`);
-      }
+      if (text.trim().startsWith("<")) throw new Error("HTML response");
+      return JSON.parse(text);
     })
     .then((data) => {
-      if (data.error) {
-        throw new Error(`Overpass API error: ${data.error}`);
-      }
+      if (data.error) throw new Error(data.error);
 
       const elements = data.elements || [];
+      cachedTrashCans = elements;
 
       elements.forEach((element) => {
         let lat, lng;
-
         if (element.type === "node") {
           lat = element.lat;
           lng = element.lon;
@@ -168,83 +146,62 @@ function tryFetchWithFallback(query) {
 
         if (lat && lng) {
           const marker = L.marker([lat, lng], { icon: trashCanIcon });
-
           let popupContent = "<b>🗑️ Trash Can</b>";
           if (element.tags) {
-            const amenity = element.tags.amenity;
-            const type = element.tags.type;
-
-            if (amenity === "waste_basket")
+            if (element.tags.amenity === "waste_basket")
               popupContent = "<b>🗑️ Waste Basket</b>";
-            else if (amenity === "waste_disposal")
-              popupContent = "<b>🗑️ Waste Disposal</b>";
-            else if (amenity === "recycling")
+            else if (element.tags.amenity === "waste_disposal")
+              popupContent = "<b>🗑️ Disposal</b>";
+            else if (element.tags.amenity === "recycling")
               popupContent = "<b>♻️ Recycling</b>";
-
-            if (type) popupContent += `<br>Type: ${type}`;
           }
-
           popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}`;
           marker.bindPopup(popupContent);
           trashCanLayer.addLayer(marker);
         }
       });
 
-      updateStatus(`Found ${elements.length} trash cans in view`, "success");
+      updateStatus(
+        `Found ${elements.length} trash cans! (Loaded once to save API)`,
+        "success",
+      );
     })
     .catch((error) => {
-      console.error(`Error from ${OVERPASS_APIS[currentAPIIndex]}:`, error);
-
-      const errorMsg = error.message || "Unknown error";
-
-      if (
-        errorMsg.includes("504") ||
-        errorMsg.includes("timeout") ||
-        errorMsg.includes("503") ||
-        errorMsg.includes("HTML error page") ||
-        errorMsg.includes("non-JSON")
-      ) {
-        retryCount++;
-        if (retryCount < OVERPASS_APIS.length) {
-          currentAPIIndex = (currentAPIIndex + 1) % OVERPASS_APIS.length;
-          updateStatus(`API busy, trying alternate server...`, "info");
-          setTimeout(
-            () => tryFetchWithFallback(query),
-            500 + Math.random() * 1500,
+      const errorMsg = error.message;
+      if (errorMsg.includes("Status") || errorMsg === "HTML response") {
+        currentAPIIndex++;
+        if (currentAPIIndex < OVERPASS_APIS.length) {
+          updateStatus(
+            `Trying API ${currentAPIIndex + 1}/${OVERPASS_APIS.length}...`,
+            "info",
           );
+          setTimeout(() => tryFetchWithFallback(query), 1000);
           return;
         }
       }
-
-      alert(
-        `Error loading trash cans:\n\n${errorMsg}\n\nTry again in a minute or visit openstreetmap.org directly.`,
-      );
-      console.error("Error fetching trash cans:", error);
-      updateStatus("Error loading trash cans", "error");
-
+      alert(`Error: ${errorMsg}`);
+      updateStatus("Error loading", "error");
       hasLoadedTrashCans = false;
-      const btn = document.getElementById("loadTrashButton");
-      if (btn) btn.disabled = false;
     });
 }
 
+function updateStatus(message, type = "info") {
+  const statusEl = document.getElementById("status");
+  const statusText = statusEl.querySelector("#statusText");
+  if (statusText) statusText.textContent = message;
+  statusEl.className = type;
+}
+
 navigator.geolocation.getCurrentPosition(
-  function (position) {
-    const lat = position.coords.latitude;
-    const lng = position.coords.longitude;
-    initializeMap(lat, lng, "Your Location");
-  },
-  function (error) {
-    console.warn("Geolocation failed:", error.message);
+  (position) => {
     initializeMap(
-      FALLBACK_LAT,
-      FALLBACK_LNG,
-      "Fallback Location (Seattle Area)",
+      position.coords.latitude,
+      position.coords.longitude,
+      "Your Location",
     );
   },
-  {
-    enableHighAccuracy: true,
-    timeout: 10000,
-    maximumAge: 0,
+  () => {
+    initializeMap(FALLBACK_LAT, FALLBACK_LNG, "Fallback Location");
   },
+  { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
 );
