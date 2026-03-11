@@ -43,7 +43,7 @@ body {
 }
 
 #loadTrashButton {
-    padding: 8px 16px;
+    padding: 10px 20px;
     background: #ff6b35;
     color: white;
     border: none;
@@ -54,6 +54,7 @@ body {
     transition: background 0.2s;
     white-space: nowrap;
     flex-shrink: 0;
+    margin-left: auto;
 }
 
 #loadTrashButton:hover:not(:disabled) {

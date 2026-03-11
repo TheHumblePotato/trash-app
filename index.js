@@ -47,21 +47,19 @@ function initializeMap(lat, lng, locationType) {
 }
 
 function addLoadButton() {
-  const L_Control = L.Control.extend({
-    onAdd: function(mapObj) {
-      const container = L.DomUtil.create("div", "leaflet-bar leaflet-control");
-      const button = L.DomUtil.create("button", "", container);
-      button.id = "loadTrashButton";
-      button.innerHTML = "🗑️ Load Trash Cans";
-      button.style.cssText =
-        "padding: 12px 16px; background: #ff6b35; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold; display: block;";
-      L.DomEvent.disableClickPropagation(button);
-      L.DomEvent.on(button, "click", loadTrashCansOnce);
-      return container;
-    },
+  const button = document.getElementById("loadTrashButton");
+  if (button) {
+    button.onclick = loadTrashCansOnce;
+  }
+  
+  // Keyboard shortcut: Press 'L' to load trash cans
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "l" || e.key === "L") {
+      if (!hasLoadedTrashCans) {
+        loadTrashCansOnce();
+      }
+    }
   });
-
-  new L_Control({ position: "topright" }).addTo(map);
 }
 
 function loadTrashCansOnce() {
