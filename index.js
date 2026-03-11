@@ -1,19 +1,16 @@
 const FALLBACK_LAT = 47.67891;
 const FALLBACK_LNG = -122.33787;
 const ZOOM_LEVEL = 15;
+const HALF_MILE_ZOOM_LEVEL = 17; // Zoom level for 0.5 mile radius
 
-const OVERPASS_APIS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://z.overpass-api.de/api/interpreter",
-];
+const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 
 let map;
 let trashCanLayer = L.featureGroup();
 let userLocationMarker;
 let userLat, userLng; // Store user location for distance calculations
 let cachedTrashCans = null;
-let currentAPIIndex = 0;
+let deviceHeading = null; // Device compass heading in degrees (0-360)
 
 // Haversine formula to calculate distance between two coordinates (in miles)
 function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -28,6 +25,63 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+// Calculate bearing (direction) from one point to another
+function calculateBearing(lat1, lon1, lat2, lon2) {
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const y = Math.sin(dLon) * Math.cos((lat2 * Math.PI) / 180);
+  const x =
+    Math.cos((lat1 * Math.PI) / 180) * Math.sin((lat2 * Math.PI) / 180) -
+    Math.sin((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.cos(dLon);
+  let bearing = (Math.atan2(y, x) * 180) / Math.PI;
+  bearing = (bearing + 360) % 360; // Normalize to 0-360
+  return bearing;
+}
+
+// Get direction cardinal description
+function getDirectionDescription(bearing) {
+  const directions = [
+    "North",
+    "NE",
+    "East",
+    "SE",
+    "South",
+    "SW",
+    "West",
+    "NW",
+  ];
+  const index = Math.round(bearing / 45) % 8;
+  return directions[index];
+}
+
+// Initialize device orientation tracking
+function initializeDeviceOrientation() {
+  if (typeof DeviceOrientationEvent !== "undefined") {
+    if (typeof DeviceOrientationEvent.requestPermission === "function") {
+      // iOS 13+ requires explicit permission
+      DeviceOrientationEvent.requestPermission()
+        .then((permission) => {
+          if (permission === "granted") {
+            window.addEventListener("deviceorientation", handleDeviceOrientation);
+          }
+        })
+        .catch((e) => console.log("Device orientation permission denied"));
+    } else {
+      // Non-iOS or older browsers
+      window.addEventListener("deviceorientation", handleDeviceOrientation);
+    }
+  }
+}
+
+function handleDeviceOrientation(event) {
+  // webkitCompassHeading for iOS, alpha for Android
+  deviceHeading =
+    event.webkitCompassHeading !== undefined
+      ? event.webkitCompassHeading
+      : 360 - event.alpha;
 }
 
 const trashCanIcon = L.icon({
@@ -76,6 +130,9 @@ function addLoadButton() {
       loadTrashCans();
     }
   });
+  
+  // Initialize device orientation tracking for compass direction
+  initializeDeviceOrientation();
 }
 
 function loadTrashCans() {
@@ -83,26 +140,33 @@ function loadTrashCans() {
 }
 
 function performFetch() {
-  const bounds = map.getBounds();
-  const south = bounds.getSouth();
-  const west = bounds.getWest();
-  const north = bounds.getNorth();
-  const east = bounds.getEast();
+  const center = map.getCenter();
+  
+  // Zoom to 0.5 mile radius around current view center
+  map.setView(center, HALF_MILE_ZOOM_LEVEL);
+  
+  // After zooming, wait a moment for bounds to update, then fetch
+  setTimeout(() => {
+    const bounds = map.getBounds();
+    const south = bounds.getSouth();
+    const west = bounds.getWest();
+    const north = bounds.getNorth();
+    const east = bounds.getEast();
 
-  if (
-    !isFinite(south) ||
-    !isFinite(west) ||
-    !isFinite(north) ||
-    !isFinite(east)
-  ) {
-    updateStatus("Invalid map bounds", "error");
-    return;
-  }
+    if (
+      !isFinite(south) ||
+      !isFinite(west) ||
+      !isFinite(north) ||
+      !isFinite(east)
+    ) {
+      updateStatus("Invalid map bounds", "error");
+      return;
+    }
 
-  trashCanLayer.clearLayers();
-  updateStatus("Searching for trash cans...", "info");
+    trashCanLayer.clearLayers();
+    updateStatus("Searching for trash cans...", "info");
 
-  const query = `[out:json][timeout:10];
+    const query = `[out:json][timeout:10];
 (
   node["amenity"="waste_basket"](${south},${west},${north},${east});
   node["amenity"="waste_disposal"](${south},${west},${north},${east});
@@ -113,19 +177,12 @@ function performFetch() {
 );
 out center;`;
 
-  currentAPIIndex = 0;
-  tryFetchWithFallback(query);
+    tryFetchWithFallback(query);
+  }, 300);
 }
 
 function tryFetchWithFallback(query) {
-  if (currentAPIIndex >= OVERPASS_APIS.length) {
-    alert("All APIs unavailable. Try again later.");
-    return;
-  }
-
-  const apiUrl = OVERPASS_APIS[currentAPIIndex];
-
-  fetch(apiUrl, { method: "POST", body: query })
+  fetch(OVERPASS_API, { method: "POST", body: query })
     .then((response) => {
       if (!response.ok) throw new Error(`Status ${response.status}`);
       return response.text();
@@ -142,6 +199,7 @@ function tryFetchWithFallback(query) {
 
       let minDistance = Infinity;
       let nearestTrashCan = null;
+      let bearingToNearest = null;
 
       elements.forEach((element) => {
         let lat, lng;
@@ -158,6 +216,7 @@ function tryFetchWithFallback(query) {
           const distance = calculateDistance(userLat, userLng, lat, lng);
           if (distance < minDistance) {
             minDistance = distance;
+            bearingToNearest = calculateBearing(userLat, userLng, lat, lng);
             nearestTrashCan = { lat, lng, distance };
           }
 
@@ -171,7 +230,9 @@ function tryFetchWithFallback(query) {
             else if (element.tags.amenity === "recycling")
               popupContent = "<b>♻️ Recycling</b>";
           }
-          popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}<br><b>Distance: ${distance.toFixed(2)} mi</b>`;
+          const distance_mi = distance.toFixed(2);
+          const direction = getDirectionDescription(calculateBearing(userLat, userLng, lat, lng));
+          popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}<br><b>Distance: ${distance_mi} mi (${direction})</b>`;
           marker.bindPopup(popupContent);
           trashCanLayer.addLayer(marker);
         }
@@ -216,26 +277,32 @@ function tryFetchWithFallback(query) {
       }
 
       let statusMsg = `Found ${elements.length} trash cans!`;
-      if (nearestTrashCan) {
-        statusMsg += ` Nearest: ${nearestTrashCan.distance.toFixed(2)} mi away`;
+      if (nearestTrashCan && bearingToNearest !== null) {
+        const direction = getDirectionDescription(bearingToNearest);
+        let directionInfo = direction;
+        
+        // If device has compass, show relative direction
+        if (deviceHeading !== null) {
+          // Calculate relative bearing to nearest trash can from device perspective
+          const relativeBearing = (bearingToNearest - deviceHeading + 360) % 360;
+          if (relativeBearing < 45 || relativeBearing > 315) {
+            directionInfo = "Ahead ↑";
+          } else if (relativeBearing >= 45 && relativeBearing < 135) {
+            directionInfo = "Right →";
+          } else if (relativeBearing >= 135 && relativeBearing < 225) {
+            directionInfo = "Behind ↓";
+          } else {
+            directionInfo = "Left ←";
+          }
+        }
+        
+        statusMsg += ` | Nearest: ${nearestTrashCan.distance.toFixed(2)} mi ${directionInfo}`;
       }
       updateStatus(statusMsg, "success");
     })
     .catch((error) => {
-      const errorMsg = error.message;
-      if (errorMsg.includes("Status") || errorMsg === "HTML response") {
-        currentAPIIndex++;
-        if (currentAPIIndex < OVERPASS_APIS.length) {
-          updateStatus(
-            `Trying API ${currentAPIIndex + 1}/${OVERPASS_APIS.length}...`,
-            "info",
-          );
-          setTimeout(() => tryFetchWithFallback(query), 1000);
-          return;
-        }
-      }
-      alert(`Error: ${errorMsg}`);
-      updateStatus("Error loading", "error");
+      alert(`Error: ${error.message}`);
+      updateStatus("Error loading trash cans", "error");
     });
 }
 

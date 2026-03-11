@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, maximum-scale=1">
+    <meta name="apple-mobile-web-app-capable" content="true">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Trash App">
+    <meta name="theme-color" content="#ff6b35">
     <title>Trash App</title>
     <link rel="stylesheet" href="index.css">
     <!-- Leaflet CSS -->
@@ -12,7 +16,7 @@
     <div id="map"></div>
     <div id="status">
         <div id="statusText">Loading...</div>
-        <button id="loadTrashButton" style="padding: 10px 20px; background: #ff6b35; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">🗑️ Load (L)</button>
+        <button id="loadTrashButton">🗑️ Load</button>
     </div>
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
