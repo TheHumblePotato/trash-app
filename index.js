@@ -1,6 +1,6 @@
 const FALLBACK_LAT = 47.67891;
 const FALLBACK_LNG = -122.33787;
-const QUARTER_MILE_ZOOM_LEVEL = 16; // Zoom level for 0.25 mile radius
+const QUARTER_MILE_ZOOM_LEVEL = 19; // Zoom level for 0.25 mile radius
 
 const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 
@@ -203,10 +203,14 @@ function showGoModal() {
   // Update bearing every frame for compass tracking
   function updateArrow() {
     if (deviceHeading !== null) {
-      const rotation = nearestTrashCanBearing - deviceHeading;
+      // Calculate relative bearing: where to point relative to device orientation
+      let rotation = nearestTrashCanBearing - deviceHeading;
+      // Normalize to -180 to 180 range for shortest rotation
+      rotation = ((rotation + 180) % 360) - 180;
       arrowDiv.style.transform = `rotate(${rotation}deg)`;
     } else {
-      arrowDiv.style.transform = `rotate(0deg)`;
+      // No compass: point toward absolute bearing
+      arrowDiv.style.transform = `rotate(${nearestTrashCanBearing}deg)`;
     }
     if (modal.style.display === "block") {
       requestAnimationFrame(updateArrow);
