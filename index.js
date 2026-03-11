@@ -1,7 +1,6 @@
 const FALLBACK_LAT = 47.67891;
 const FALLBACK_LNG = -122.33787;
-const ZOOM_LEVEL = 15;
-const HALF_MILE_ZOOM_LEVEL = 17; // Zoom level for 0.5 mile radius
+const QUARTER_MILE_ZOOM_LEVEL = 16; // Zoom level for 0.25 mile radius
 
 const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 
@@ -11,6 +10,29 @@ let userLocationMarker;
 let userLat, userLng; // Store user location for distance calculations
 let cachedTrashCans = null;
 let deviceHeading = null; // Device compass heading in degrees (0-360)
+let nearestTrashCanBearing = null; // Bearing to nearest trash can
+
+// Icon colors for different amenity types
+const trashCanIcons = {
+  waste_basket: L.icon({
+    iconUrl: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cmVjdCB4PSI2IiB5PSI4IiB3aWR0aD0iMTIiIGhlaWdodD0iMTAiIGZpbGw9IiNmZmE1MDAiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxIi8+PHJlY3QgeD0iNiIgeT0iMiIgd2lkdGg9IjEyIiBoZWlnaHQ9IjIiIGZpbGw9IiNmZmE1MDAiLz48bGluZSB4MT0iMTAiIHkxPSI1IiB4Mj0iMTAiIHkyPSI2IiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==",
+    iconSize: [48, 48],
+    iconAnchor: [24, 48],
+    popupAnchor: [0, -48],
+  }),
+  waste_disposal: L.icon({
+    iconUrl: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cmVjdCB4PSI2IiB5PSI4IiB3aWR0aD0iMTIiIGhlaWdodD0iMTAiIGZpbGw9IiM2YjUzOTQiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxIi8+PHJlY3QgeD0iNiIgeT0iMiIgd2lkdGg9IjEyIiBoZWlnaHQ9IjIiIGZpbGw9IiM2YjUzOTQiLz48bGluZSB4MT0iMTAiIHkxPSI1IiB4Mj0iMTAiIHkyPSI2IiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==",
+    iconSize: [48, 48],
+    iconAnchor: [24, 48],
+    popupAnchor: [0, -48],
+  }),
+  recycling: L.icon({
+    iconUrl: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0Ij48cmVjdCB4PSI2IiB5PSI4IiB3aWR0aD0iMTIiIGhlaWdodD0iMTAiIGZpbGw9IiMyOGE3NDUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLXdpZHRoPSIxIi8+PHJlY3QgeD0iNiIgeT0iMiIgd2lkdGg9IjEyIiBoZWlnaHQ9IjIiIGZpbGw9IiMyOGE3NDUiLz48bGluZSB4MT0iMTAiIHkxPSI1IiB4Mj0iMTAiIHkyPSI2IiBzdHJva2U9IiMwMDAiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==",
+    iconSize: [48, 48],
+    iconAnchor: [24, 48],
+    popupAnchor: [0, -48],
+  }),
+};
 
 // Haversine formula to calculate distance between two coordinates (in miles)
 function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -96,7 +118,7 @@ function initializeMap(lat, lng, locationType) {
   userLat = lat;
   userLng = lng; // Store for distance calculations
   
-  map = L.map("map").setView([lat, lng], ZOOM_LEVEL);
+  map = L.map("map").setView([lat, lng], QUARTER_MILE_ZOOM_LEVEL);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: "© OpenStreetMap contributors",
@@ -124,6 +146,11 @@ function addLoadButton() {
     button.onclick = loadTrashCans;
   }
   
+  const goButton = document.getElementById("goButton");
+  if (goButton) {
+    goButton.onclick = showGoModal;
+  }
+  
   // Keyboard shortcut: Press 'L' to load trash cans
   document.addEventListener("keydown", (e) => {
     if (e.key === "l" || e.key === "L") {
@@ -135,6 +162,78 @@ function addLoadButton() {
   initializeDeviceOrientation();
 }
 
+function showGoModal() {
+  if (!cachedTrashCans || cachedTrashCans.length === 0) {
+    alert("No trash cans loaded. Click Load first.");
+    return;
+  }
+
+  // Find nearest trash can
+  let minDistance = Infinity;
+  let nearest = null;
+  
+  cachedTrashCans.forEach((element) => {
+    let lat, lng;
+    if (element.type === "node") {
+      lat = element.lat;
+      lng = element.lon;
+    } else if (element.type === "way" && element.center) {
+      lat = element.center.lat;
+      lng = element.center.lon;
+    }
+    
+    if (lat && lng) {
+      const distance = calculateDistance(userLat, userLng, lat, lng);
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearest = { lat, lng, distance };
+      }
+    }
+  });
+
+  if (!nearest) return;
+
+  nearestTrashCanBearing = calculateBearing(userLat, userLng, nearest.lat, nearest.lng);
+
+  // Create modal
+  const modal = document.getElementById("goModal");
+  const arrowDiv = document.getElementById("goArrow");
+  const distanceDiv = document.getElementById("goDistance");
+  
+  // Update bearing every frame for compass tracking
+  function updateArrow() {
+    if (deviceHeading !== null) {
+      const rotation = nearestTrashCanBearing - deviceHeading;
+      arrowDiv.style.transform = `rotate(${rotation}deg)`;
+    } else {
+      arrowDiv.style.transform = `rotate(0deg)`;
+    }
+    if (modal.style.display === "block") {
+      requestAnimationFrame(updateArrow);
+    }
+  }
+
+  distanceDiv.textContent = `${nearest.distance.toFixed(2)} mi`;
+  modal.style.display = "block";
+  updateArrow();
+
+  // Close modal when clicking outside
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      modal.style.display = "none";
+    }
+  };
+
+  // Close on Escape
+  const closeHandler = (e) => {
+    if (e.key === "Escape") {
+      modal.style.display = "none";
+      document.removeEventListener("keydown", closeHandler);
+    }
+  };
+  document.addEventListener("keydown", closeHandler);
+}
+
 function loadTrashCans() {
   performFetch();
 }
@@ -142,8 +241,8 @@ function loadTrashCans() {
 function performFetch() {
   const center = map.getCenter();
   
-  // Zoom to 0.5 mile radius around current view center
-  map.setView(center, HALF_MILE_ZOOM_LEVEL);
+  // Zoom to 0.25 mile radius around current view center
+  map.setView(center, QUARTER_MILE_ZOOM_LEVEL);
   
   // After zooming, wait a moment for bounds to update, then fetch
   setTimeout(() => {
@@ -197,12 +296,10 @@ function tryFetchWithFallback(query) {
       const elements = data.elements || [];
       cachedTrashCans = elements;
 
-      let minDistance = Infinity;
-      let nearestTrashCan = null;
-      let bearingToNearest = null;
-
       elements.forEach((element) => {
         let lat, lng;
+        let amenityType = "waste_basket"; // default
+        
         if (element.type === "node") {
           lat = element.lat;
           lng = element.lon;
@@ -211,16 +308,17 @@ function tryFetchWithFallback(query) {
           lng = element.center.lon;
         }
 
-        if (lat && lng) {
-          // Calculate distance to this trash can
-          const distance = calculateDistance(userLat, userLng, lat, lng);
-          if (distance < minDistance) {
-            minDistance = distance;
-            bearingToNearest = calculateBearing(userLat, userLng, lat, lng);
-            nearestTrashCan = { lat, lng, distance };
-          }
+        if (element.tags && element.tags.amenity) {
+          amenityType = element.tags.amenity;
+        }
 
-          const marker = L.marker([lat, lng], { icon: trashCanIcon });
+        if (lat && lng) {
+          const distance = calculateDistance(userLat, userLng, lat, lng);
+          
+          // Select icon based on amenity type
+          const icon = trashCanIcons[amenityType] || trashCanIcons.waste_basket;
+          
+          const marker = L.marker([lat, lng], { icon });
           let popupContent = "<b>🗑️ Trash Can</b>";
           if (element.tags) {
             if (element.tags.amenity === "waste_basket")
@@ -231,74 +329,13 @@ function tryFetchWithFallback(query) {
               popupContent = "<b>♻️ Recycling</b>";
           }
           const distance_mi = distance.toFixed(2);
-          const direction = getDirectionDescription(calculateBearing(userLat, userLng, lat, lng));
-          popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}<br><b>Distance: ${distance_mi} mi (${direction})</b>`;
+          popupContent += `<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lng.toFixed(4)}<br><b>Distance: ${distance_mi} mi</b>`;
           marker.bindPopup(popupContent);
           trashCanLayer.addLayer(marker);
         }
       });
 
-      // Auto-zoom to 0.5 mile radius around results
-      if (elements.length > 0) {
-        const halfMileInDegrees = 0.00724; // approximate conversion: 0.5 mi ≈ 0.00724 degrees
-        
-        let minLat = Infinity, maxLat = -Infinity;
-        let minLng = Infinity, maxLng = -Infinity;
-        
-        elements.forEach((element) => {
-          let lat, lng;
-          if (element.type === "node") {
-            lat = element.lat;
-            lng = element.lon;
-          } else if (element.type === "way" && element.center) {
-            lat = element.center.lat;
-            lng = element.center.lon;
-          }
-          
-          if (lat && lng) {
-            minLat = Math.min(minLat, lat);
-            maxLat = Math.max(maxLat, lat);
-            minLng = Math.min(minLng, lng);
-            maxLng = Math.max(maxLng, lng);
-          }
-        });
-        
-        // Expand bounds to create 0.5 mile radius buffer
-        minLat -= halfMileInDegrees;
-        maxLat += halfMileInDegrees;
-        minLng -= halfMileInDegrees;
-        maxLng += halfMileInDegrees;
-        
-        const bounds = L.latLngBounds(
-          L.latLng(minLat, minLng),
-          L.latLng(maxLat, maxLng)
-        );
-        map.fitBounds(bounds, { padding: [50, 50] });
-      }
-
-      let statusMsg = `Found ${elements.length} trash cans!`;
-      if (nearestTrashCan && bearingToNearest !== null) {
-        const direction = getDirectionDescription(bearingToNearest);
-        let directionInfo = direction;
-        
-        // If device has compass, show relative direction
-        if (deviceHeading !== null) {
-          // Calculate relative bearing to nearest trash can from device perspective
-          const relativeBearing = (bearingToNearest - deviceHeading + 360) % 360;
-          if (relativeBearing < 45 || relativeBearing > 315) {
-            directionInfo = "Ahead ↑";
-          } else if (relativeBearing >= 45 && relativeBearing < 135) {
-            directionInfo = "Right →";
-          } else if (relativeBearing >= 135 && relativeBearing < 225) {
-            directionInfo = "Behind ↓";
-          } else {
-            directionInfo = "Left ←";
-          }
-        }
-        
-        statusMsg += ` | Nearest: ${nearestTrashCan.distance.toFixed(2)} mi ${directionInfo}`;
-      }
-      updateStatus(statusMsg, "success");
+      updateStatus(`Found ${elements.length} trash cans!`, "success");
     })
     .catch((error) => {
       alert(`Error: ${error.message}`);
