@@ -61,6 +61,14 @@ body {
     word-break: break-word;
 }
 
+#distanceIndicator {
+    font-size: 12px;
+    color: #666;
+    margin-right: 10px;
+    white-space: nowrap;
+    align-self: center;
+}
+
 #loadTrashButton {
     padding: 12px 20px;
     background: #ff6b35;

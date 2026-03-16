@@ -7,7 +7,6 @@ const OVERPASS_API = "https://overpass-api.de/api/interpreter";
 let map;
 let trashCanLayer = L.featureGroup();
 let userLocationMarker;
-let userHeadingLayer = L.featureGroup(); // Layer for heading indicator
 let userLat, userLng; // Store user location for distance calculations
 let cachedTrashCans = null;
 let deviceHeading = null; // Device compass heading in degrees (0-360)
@@ -104,9 +103,6 @@ function handleDeviceOrientation(event) {
     event.webkitCompassHeading !== undefined
       ? event.webkitCompassHeading
       : 360 - event.alpha;
-  
-  // Update the heading indicator on map
-  updateUserHeadingIndicator();
 }
 
 const trashCanIcon = L.icon({
@@ -129,7 +125,6 @@ function initializeMap(lat, lng, locationType) {
   }).addTo(map);
 
   trashCanLayer.addTo(map);
-  userHeadingLayer.addTo(map);
 
   userLocationMarker = L.marker([lat, lng], {
     title: locationType,
@@ -142,6 +137,7 @@ function initializeMap(lat, lng, locationType) {
 
   addLoadButton();
   updateStatus(`Map loaded - Click button to find trash cans`, "success");
+  updateDistanceIndicator(null); // Hide distance indicator initially
 }
 
 function addLoadButton() {
@@ -159,35 +155,6 @@ function addLoadButton() {
   
   // Initialize device orientation tracking for compass direction
   initializeDeviceOrientation();
-}
-
-// Update user heading indicator on map
-function updateUserHeadingIndicator() {
-  userHeadingLayer.clearLayers();
-  
-  if (deviceHeading !== null && map) {
-    // Create a line showing device heading direction
-    const headingRad = (deviceHeading * Math.PI) / 180;
-    const distance = 0.002; // About 200m in degrees
-    const endLat = userLat + distance * Math.cos(headingRad);
-    const endLng = userLng + distance * Math.sin(headingRad);
-    
-    // Draw line
-    const line = L.polyline(
-      [[userLat, userLng], [endLat, endLng]],
-      { color: "#0066ff", weight: 3, opacity: 0.8, dashArray: "5, 5" }
-    );
-    userHeadingLayer.addLayer(line);
-    
-    // Add arrow marker at end
-    const arrowIcon = L.divIcon({
-      className: "heading-arrow",
-      html: `<div style="font-size: 24px; color: #0066ff; transform: rotate(${deviceHeading}deg); transform-origin: center; text-shadow: 1px 1px 3px rgba(0,0,0,0.5);">▶</div>`,
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
-    });
-    L.marker([endLat, endLng], { icon: arrowIcon }).addTo(userHeadingLayer);
-  }
 }
 
 function loadTrashCans() {
@@ -252,6 +219,9 @@ function tryFetchWithFallback(query) {
       const elements = data.elements || [];
       cachedTrashCans = elements;
 
+      let minDistance = Infinity;
+      let nearestTrashCan = null;
+
       elements.forEach((element) => {
         let lat, lng;
         let amenityType = "waste_basket"; // default
@@ -270,6 +240,12 @@ function tryFetchWithFallback(query) {
 
         if (lat && lng) {
           const distance = calculateDistance(userLat, userLng, lat, lng);
+          
+          // Track nearest trash can
+          if (distance < minDistance) {
+            minDistance = distance;
+            nearestTrashCan = { lat, lng, distance };
+          }
           
           // Select icon based on amenity type
           const icon = trashCanIcons[amenityType] || trashCanIcons.waste_basket;
@@ -291,6 +267,9 @@ function tryFetchWithFallback(query) {
         }
       });
 
+      // Update distance indicator
+      updateDistanceIndicator(nearestTrashCan);
+
       updateStatus(`Found ${elements.length} trash cans!`, "success");
     })
     .catch((error) => {
@@ -304,6 +283,17 @@ function updateStatus(message, type = "info") {
   const statusText = statusEl.querySelector("#statusText");
   if (statusText) statusText.textContent = message;
   statusEl.className = type;
+}
+
+function updateDistanceIndicator(nearestTrashCan) {
+  const indicator = document.getElementById("distanceIndicator");
+  if (nearestTrashCan) {
+    indicator.textContent = `Nearest: ${nearestTrashCan.distance.toFixed(2)} mi`;
+    indicator.style.display = "block";
+  } else {
+    indicator.textContent = "Nearest: -- mi";
+    indicator.style.display = "none";
+  }
 }
 
 navigator.geolocation.getCurrentPosition(
